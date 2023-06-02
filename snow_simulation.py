@@ -29,14 +29,82 @@ bound = 3
 # nu = 0.2  #  Poisson's ratio
 
 # snow2013 parameters
-E = 140000
+LOWER_HARDENING = 0
+LOWER_YOUNG_MODULUS = 1
+LOWER_CRITICAL_COMPRESSION = 2
+REFERENCE = 3
+LOWER_CRITICAL_COMPRESSION_STRETCH = 4
+LOWER_CRITICAL_STRETCH = 5
+
+TEST_TYPE = LOWER_YOUNG_MODULUS
+
+NORMAL_E = 1.4 * 1e5
+LOWER_E = 4.8 * 1e4
+NORMAL_critical_compression = 2.5 * 1e-2
+LOWER_critical_compression = 1.9 * 1e-2
+NORMAL_critical_stretch = 7.5 * 1e-3
+LOWER_critical_stretch = 5 * 1e-3
+NORMAL_hardening = 10
+LOWER_hardening = 5
+
+ply_directory = ""
+
+if TEST_TYPE == LOWER_HARDENING:
+    E = NORMAL_E
+    critical_compression = NORMAL_critical_compression
+    critical_stretch = NORMAL_critical_stretch
+    hardening = LOWER_hardening
+    ply_directory = "lower_hardening_ply"
+elif TEST_TYPE == LOWER_YOUNG_MODULUS:
+    E = LOWER_E
+    critical_compression = NORMAL_critical_compression
+    critical_stretch = NORMAL_critical_stretch
+    hardening = NORMAL_hardening
+    ply_directory = "lower_young_modulus_ply"
+elif TEST_TYPE == LOWER_CRITICAL_COMPRESSION:
+    E = NORMAL_E
+    critical_compression = LOWER_critical_compression
+    critical_stretch = NORMAL_critical_stretch
+    hardening = NORMAL_hardening
+    ply_directory = "lower_critical_compression_ply"
+elif TEST_TYPE == REFERENCE:
+    E = NORMAL_E
+    critical_compression = NORMAL_critical_compression
+    critical_stretch = NORMAL_critical_stretch
+    hardening = NORMAL_hardening
+    ply_directory = "reference_ply"
+elif TEST_TYPE == LOWER_CRITICAL_COMPRESSION_STRETCH:
+    E = NORMAL_E
+    critical_compression = LOWER_critical_compression
+    critical_stretch = LOWER_critical_stretch
+    hardening = NORMAL_hardening
+    ply_directory = "lower_critical_compression_and_stretch_ply"
+elif TEST_TYPE == LOWER_CRITICAL_STRETCH:
+    E = NORMAL_E
+    critical_compression = NORMAL_critical_compression
+    critical_stretch = LOWER_critical_stretch
+    hardening = NORMAL_hardening
+    ply_directory = "lower_critical_stretch_ply"
+
 nu = 0.2
-hardening = 10
-critical_compression = 2.5 * 1e-2
-critical_stretch = 5.0 * 1e-3
 
 mu_0, lambda_0 = E / (2 * (1 + nu)), E * nu / (
     (1 + nu) * (1 - 2 * nu))  # Lame parameters
+
+# MPM and MLS-MPM
+
+MPM = 0
+MLS_MPM = 1
+
+# MPM_TYPE = MLS_MPM
+MPM_TYPE = MPM
+
+mpm_directory = ""
+if MPM_TYPE == MPM:
+    mpm_directory = "MPM_ply"
+elif MPM_TYPE == MLS_MPM:
+    mpm_directory = "MLS_MPM_ply"
+
 
 F_x = ti.Vector.field(dim, float, n_particles) # position
 F_v = ti.Vector.field(dim, float, n_particles) # velocity
@@ -135,13 +203,6 @@ indices_list = [0, 2, 6,
 for i in range(36):
     indices[i] = indices_list[i]
 
-# MPM and MLS-MPM
-
-MPM = 0
-MLS_MPM = 1
-
-MPM_TYPE = MLS_MPM
-
 @ti.func
 def detect_and_correct(coor, v):
     dis = (coor / n_grid) - center
@@ -189,7 +250,6 @@ def MLSMPM_substep(g_x: float, g_y: float, g_z: float):
         base = int(Xp - 0.5)
         fx = Xp - base
         w = [0.5 * (1.5 - fx)**2, 0.75 - (fx - 1)**2, 0.5 * (fx - 0.5)**2]
-        w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
         F_dg[p] = (ti.Matrix.identity(float, 3) +
                   dt * F_C[p]) @ F_dg[p]  # deformation gradient update
         # Hardening coefficient: snow gets harder when compressed
@@ -237,7 +297,6 @@ def MLSMPM_substep(g_x: float, g_y: float, g_z: float):
         w = [0.5 * (1.5 - fx)**2, 0.75 - (fx - 1)**2, 0.5 * (fx - 0.5)**2]
         new_v = ti.zero(F_v[p])
         new_C = ti.zero(F_C[p])
-        incre = ti.zero(F_dg[p])
         for offset in ti.static(ti.grouped(ti.ndrange(*neighbour))):
             dpos = (offset - fx) * dx
             weight = 1.0
@@ -274,10 +333,7 @@ def MPM_substep(g_x: float, g_y: float, g_z: float):
         U, sig, V = ti.svd(F_dg[p])
         J = 1.0
         for d in ti.static(range(3)):
-            new_sig = sig[d, d]
-            F_Jp[p] *= sig[d, d] / new_sig
-            sig[d, d] = new_sig
-            J *= new_sig
+            J *= sig[d, d]
         stress = 2 * mu * (F_dg[p] - U @ V.transpose()) @ F_dg[p].transpose(
         ) + ti.Matrix.identity(float, 3) * la * J * (J - 1)
         stress = -p_vol * stress
@@ -494,7 +550,8 @@ def render():
 
 def main():
     frame_id = 0
-    series_prefix = "MPM_ply/reference_ply/ex.ply"
+    series_prefix = mpm_directory + "/" + ply_directory + "/ex.ply"
+    # series_prefix = "MPM_ply/reference_ply/ex.ply"
     while window.running:
         frame_id += 1
         frame_id = frame_id % 1024
