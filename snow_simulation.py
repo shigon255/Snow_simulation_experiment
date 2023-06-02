@@ -9,7 +9,7 @@ ti.init(arch=arch, debug = True)
 # basic parameters
 # dim, n_grid, steps, dt = 2, 128, 20, 2e-4
 #dim, n_grid, steps, dt = 2, 256, 32, 1e-4
-dim, n_grid, steps, dt = 3, 32, 25, 4e-4
+dim, n_grid, steps, dt = 3, 64, 25, 1e-4
 # dim, n_grid, steps, dt = 3, 64, 25, 2e-4
 #dim, n_grid, steps, dt = 3, 128, 5, 1e-4
 
@@ -36,7 +36,7 @@ REFERENCE = 3
 LOWER_CRITICAL_COMPRESSION_STRETCH = 4
 LOWER_CRITICAL_STRETCH = 5
 
-TEST_TYPE = LOWER_YOUNG_MODULUS
+TEST_TYPE = REFERENCE
 
 NORMAL_E = 1.4 * 1e5
 LOWER_E = 4.8 * 1e4
@@ -96,8 +96,8 @@ mu_0, lambda_0 = E / (2 * (1 + nu)), E * nu / (
 MPM = 0
 MLS_MPM = 1
 
-# MPM_TYPE = MLS_MPM
-MPM_TYPE = MPM
+MPM_TYPE = MLS_MPM
+# MPM_TYPE = MPM
 
 mpm_directory = ""
 if MPM_TYPE == MPM:
