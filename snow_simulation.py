@@ -59,29 +59,9 @@ WATER = 0
 JELLY = 1
 SNOW = 2
 
-vec3 = ti.types.vector(3, float)
+vec3 = ti.types.vector(3, float) # taichi type definition
 
-@ti.kernel
-def rotate(axis: vec3, angle: ti.f32, vec: ti.template()) -> vec3:
-    # axis: vec3
-    # angle: float(radian)
-    rotatemat = ti.math.rot_by_axis(axis, angle)    
-    translatemat = ti.math.translate(-center[0], -center[1], -center[2])
-    invtranslatemat = ti.math.translate(center[0], center[1], center[2])
-    newvec = invtranslatemat @ rotatemat @ translatemat @ vec
-    return ti.Vector([newvec[0], newvec[1], newvec[2]])
-
-@ti.kernel
-def rotatevector(axis: vec3, angle: ti.f32, vec: ti.template()) -> vec3:
-    # axis: vec3
-    # angle: float(radian)
-    rotatemat = ti.math.rot_by_axis(axis, angle)    
-    # translatemat = ti.math.translate(-center[0], -center[1], -center[2])
-    # invtranslatemat = ti.math.translate(center[0], center[1], center[2])
-    # newvec = invtranslatemat @ rotatemat @ translatemat @ vec
-    newvec = rotatemat @ vec
-    return ti.Vector([newvec[0], newvec[1], newvec[2]])
-
+# physical environment setting
 center = (0.45, 0.3, 0.2)
 r = 0.1
 vertices = ti.Vector.field(dim, float, 8)
@@ -96,10 +76,32 @@ vertices_list = [[center[0] - r, center[1] - r, center[2] - r],
 
 rotateaxis = ti.Vector([1.0, 1.0, 1.0])
 angle = ti.math.pi
+
 # angle = 0.0
 xaxis = [1.0, 0.0, 0.0]
 yaxis = [0.0, 1.0, 0.0]
 zaxis = [0.0, 0.0, 1.0]
+
+# rotate position
+@ti.kernel
+def rotate(axis: vec3, angle: ti.f32, vec: ti.template()) -> vec3:
+    # axis: vec3
+    # angle: float(radian)
+    rotatemat = ti.math.rot_by_axis(axis, angle)    
+    translatemat = ti.math.translate(-center[0], -center[1], -center[2])
+    invtranslatemat = ti.math.translate(center[0], center[1], center[2])
+    newvec = invtranslatemat @ rotatemat @ translatemat @ vec
+    return ti.Vector([newvec[0], newvec[1], newvec[2]])
+
+# rotate vector
+@ti.kernel
+def rotatevector(axis: vec3, angle: ti.f32, vec: ti.template()) -> vec3:
+    # axis: vec3
+    # angle: float(radian)
+    rotatemat = ti.math.rot_by_axis(axis, angle)    
+    newvec = rotatemat @ vec
+    return ti.Vector([newvec[0], newvec[1], newvec[2]])
+
 
 tmp = xaxis 
 tmp.append(0.0)
@@ -110,9 +112,6 @@ yaxis = rotatevector(rotateaxis, angle, ti.Vector(tmp))
 tmp = zaxis 
 tmp.append(0.0)
 zaxis = rotatevector(rotateaxis, angle, ti.Vector(tmp))
-# print(xaxis)
-# print(yaxis)
-# print(zaxis)
 
 for i in range(8):
     # vertices[i] = ti.Vector(vertices_list[i])
@@ -136,19 +135,21 @@ indices_list = [0, 2, 6,
 for i in range(36):
     indices[i] = indices_list[i]
 
+# MPM and MLS-MPM
+
+MPM = 0
+MLS_MPM = 1
+
+MPM_TYPE = MLS_MPM
+
 @ti.func
 def detect_and_correct(coor, v):
     dis = (coor / n_grid) - center
     xdis = ti.math.dot(dis, xaxis)
     ydis = ti.math.dot(dis, yaxis)
     zdis = ti.math.dot(dis, zaxis)
-    # print(xdis)
-    # print(ydis)
-    # print(zdis)
-    # print("detect")
-    # if (center[0]-r <= coor[0] / n_grid <= center[0] + r) and (center[1]-r <= coor[1] / n_grid <= center[1] + r) and (center[2]-r <= coor[2] / n_grid <= center[2] + r):
+    # collision detection
     if -r <= xdis <= r and -r <= ydis <= r and -r <= zdis <= r:
-        # print("collide")
         vx = ti.math.dot(v, xaxis)
         vy = ti.math.dot(v, yaxis)
         vz = ti.math.dot(v, zaxis)
@@ -167,17 +168,13 @@ def detect_and_correct(coor, v):
             vz = 0
         elif 0 <= zdis <= r and vz < 0:
             vz = 0
-
-        # for i in ti.static(range(dim)):
-          #   if center[i]-r <= coor[i] / n_grid <= center[i] and v[i] > 0:
-            #     v[i] = 0
-           #  elif center[i] <= coor[i] / n_grid <= center[i] + r and v[i] < 0:
-             #    v[i] = 0
         v = vx * xaxis + vy * yaxis  + vz * zaxis
+
     return v
-        
+
+
 @ti.kernel
-def substep(g_x: float, g_y: float, g_z: float):
+def MLSMPM_substep(g_x: float, g_y: float, g_z: float):
     # set to zero
     for I in ti.grouped(F_grid_m):
         F_grid_v[I] = ti.zero(F_grid_v[I])
@@ -193,15 +190,86 @@ def substep(g_x: float, g_y: float, g_z: float):
         fx = Xp - base
         w = [0.5 * (1.5 - fx)**2, 0.75 - (fx - 1)**2, 0.5 * (fx - 0.5)**2]
         w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
-        # F_dg[p] = (ti.Matrix.identity(float, 3) +
-          #          dt * F_C[p]) @ F_dg[p]  # deformation gradient update
+        F_dg[p] = (ti.Matrix.identity(float, 3) +
+                  dt * F_C[p]) @ F_dg[p]  # deformation gradient update
         # Hardening coefficient: snow gets harder when compressed
         h = ti.exp(hardening * (1.0 - F_Jp[p]))
-        if F_materials[p] == JELLY:  # jelly, make it softer
-            h = 0.3
         mu, la = mu_0 * h, lambda_0 * h
-        if F_materials[p] == WATER:  # liquid
-            mu = 0.0
+
+        U, sig, V = ti.svd(F_dg[p])
+        J = 1.0
+        for d in ti.static(range(3)):
+            new_sig = sig[d, d]
+            new_sig = ti.min(ti.max(sig[d, d], 1-critical_compression), 1+critical_stretch)
+            F_Jp[p] *= sig[d, d] / new_sig
+            sig[d, d] = new_sig
+            J *= new_sig
+        F_dg[p] = U @ sig @ V.transpose()
+        stress = 2 * mu * (F_dg[p] - U @ V.transpose()) @ F_dg[p].transpose(
+        ) + ti.Matrix.identity(float, 3) * la * J * (J - 1)
+        stress = (-dt * p_vol * 4) * stress / dx**2
+        affine = stress + p_mass * F_C[p]
+
+        for offset in ti.static(ti.grouped(ti.ndrange(*neighbour))):
+            dpos = (offset - fx) * dx
+            weight = 1.0
+            for i in ti.static(range(dim)):
+                weight *= w[offset[i]][i]
+            F_grid_v[base +
+                    offset] += weight * (p_mass * F_v[p] + affine @ dpos)
+            F_grid_m[base + offset] += weight * p_mass
+    for I in ti.grouped(F_grid_m):
+        if F_grid_m[I] > 0:
+            F_grid_v[I] /= F_grid_m[I]
+        F_grid_v[I] += dt * ti.Vector([g_x, g_y, g_z])
+        F_grid_v[I] = detect_and_correct(I, F_grid_v[I])
+
+        cond = (I < bound) & (F_grid_v[I] < 0) | \
+               (I > n_grid - bound) & (F_grid_v[I] > 0)
+        F_grid_v[I] = ti.select(cond, 0, F_grid_v[I])
+    ti.loop_config(block_dim=n_grid)
+    for p in F_x:
+        if F_used[p] == 0:
+            continue
+        Xp = F_x[p] / dx
+        base = int(Xp - 0.5)
+        fx = Xp - base
+        w = [0.5 * (1.5 - fx)**2, 0.75 - (fx - 1)**2, 0.5 * (fx - 0.5)**2]
+        new_v = ti.zero(F_v[p])
+        new_C = ti.zero(F_C[p])
+        incre = ti.zero(F_dg[p])
+        for offset in ti.static(ti.grouped(ti.ndrange(*neighbour))):
+            dpos = (offset - fx) * dx
+            weight = 1.0
+            for i in ti.static(range(dim)):
+                weight *= w[offset[i]][i]
+            g_v = F_grid_v[base + offset]
+            new_v += weight * g_v
+            new_C += 4 * weight * g_v.outer_product(dpos) / dx**2
+        F_v[p] = new_v
+        F_x[p] += dt * F_v[p]
+        F_C[p] = new_C
+
+@ti.kernel
+def MPM_substep(g_x: float, g_y: float, g_z: float):
+    # set to zero
+    for I in ti.grouped(F_grid_m):
+        F_grid_v[I] = ti.zero(F_grid_v[I])
+        F_grid_m[I] = 0
+        F_grid_f[I] = ti.zero(F_grid_f[I])
+    ti.loop_config(block_dim=n_grid)
+    # P2G
+    for p in F_x:
+        if F_used[p] == 0:
+            continue
+        Xp = F_x[p] / dx
+        base = int(Xp - 0.5)
+        fx = Xp - base
+        w = [0.5 * (1.5 - fx)**2, 0.75 - (fx - 1)**2, 0.5 * (fx - 0.5)**2]
+        w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
+        # Hardening coefficient: snow gets harder when compressed
+        h = ti.exp(hardening * (1.0 - F_Jp[p]))
+        mu, la = mu_0 * h, lambda_0 * h
 
         U, sig, V = ti.svd(F_dg[p])
         J = 1.0
@@ -212,9 +280,7 @@ def substep(g_x: float, g_y: float, g_z: float):
             J *= new_sig
         stress = 2 * mu * (F_dg[p] - U @ V.transpose()) @ F_dg[p].transpose(
         ) + ti.Matrix.identity(float, 3) * la * J * (J - 1)
-        # stress = (-dt * p_vol * 4) * stress / dx**2
         stress = -p_vol * stress
-        # affine = stress + p_mass * F_C[p]
 
         for offset in ti.static(ti.grouped(ti.ndrange(*neighbour))):
             dpos = (offset - fx) * dx
@@ -222,8 +288,6 @@ def substep(g_x: float, g_y: float, g_z: float):
             weight_grad = vec3(w_grad[offset[0]][0] * w[offset[1]][1] * w[offset[2]][2], w[offset[0]][0] * w_grad[offset[1]][1] * w[offset[2]][2], w[offset[0]][0] * w[offset[1]][1] * w_grad[offset[2]][2])
             for i in ti.static(range(dim)):
                 weight *= w[offset[i]][i]
-            # F_grid_v[base +
-              #        offset] += weight * (p_mass * F_v[p] + affine @ dpos)
             F_grid_v[base + offset] += weight * p_mass * F_v[p]
             F_grid_m[base + offset] += weight * p_mass
             F_grid_f[base + offset] += stress @ weight_grad
@@ -261,29 +325,17 @@ def substep(g_x: float, g_y: float, g_z: float):
             incre += (dt * g_v).outer_product(weight_grad)
         F_v[p] = new_v
         F_dg[p] += incre @ F_dg[p]
-        # if F_materials[p] == JELLY:
-          #   F_v[p] = 0
         F_x[p] += dt * F_v[p]
         F_C[p] = new_C
         U, sig, V = ti.svd(F_dg[p])
         J = 1.0
         for d in ti.static(range(3)):
             new_sig = sig[d, d]
-            if F_materials[p] == SNOW:  # Snow
-                # new_sig = ti.min(ti.max(sig[d, d], 1 - 2.5e-2),
-                                 # 1 + 7.5e-3)  # Plasticity
-                new_sig = ti.min(ti.max(sig[d, d], 1-critical_compression), 1+critical_stretch)
+            new_sig = ti.min(ti.max(sig[d, d], 1-critical_compression), 1+critical_stretch)
             F_Jp[p] *= sig[d, d] / new_sig
             sig[d, d] = new_sig
             J *= new_sig
-        if F_materials[p] == WATER:
-            # Reset deformation gradient to avoid numerical instability
-            new_F = ti.Matrix.identity(float, 3)
-            new_F[0, 0] = J
-            F_dg[p] = new_F
-        elif F_materials[p] == SNOW:
-            # Reconstruct elastic deformation gradient after plasticity
-            F_dg[p] = U @ sig @ V.transpose()
+        F_dg[p] = U @ sig @ V.transpose()
 
 class CubeVolume:
     def __init__(self, minimum, size, material):
@@ -355,37 +407,14 @@ def set_color_by_material(mat_color: ti.types.ndarray()):
 print("Loading presets...this might take a minute")
 
 presets = [[
-    CubeVolume(ti.Vector([0.55, 0.05, 0.55]), ti.Vector([0.4, 0.4, 0.4]),
-               WATER),
-],
-           [
-               CubeVolume(ti.Vector([0.05, 0.05, 0.05]),
-                          ti.Vector([0.3, 0.4, 0.3]), WATER),
-               CubeVolume(ti.Vector([0.65, 0.05, 0.65]),
-                          ti.Vector([0.3, 0.4, 0.3]), WATER),
-           ],
-           [
-               CubeVolume(ti.Vector([0.6, 0.05, 0.6]),
-                          ti.Vector([0.25, 0.25, 0.25]), WATER),
-               CubeVolume(ti.Vector([0.35, 0.35, 0.35]),
-                          ti.Vector([0.25, 0.25, 0.25]), SNOW),
-               CubeVolume(ti.Vector([0.05, 0.6, 0.05]),
-                          ti.Vector([0.25, 0.25, 0.25]), JELLY),
-           ],
-           [
                CubeVolume(ti.Vector([0.35, 0.7, 0.0]),
-                          ti.Vector([0.2, 0.2, 0.2]), SNOW)#  ,
-                # CubeVolume(ti.Vector([0.05, 0.6, 0.05]),
-                  #          ti.Vector([0.25, 0.25, 0.25]), JELLY),
+                          ti.Vector([0.2, 0.2, 0.2]), SNOW)
            ]]
 preset_names = [
-    "Single Dam Break",
-    "Double Dam Break",
-    "Water Snow Jelly",
     "Customize"
 ]
 
-curr_preset_id = 3
+curr_preset_id = 0
 
 paused = False
 
@@ -419,17 +448,6 @@ def show_options():
     global paused
     global particles_radius
     global curr_preset_id
-
-    """
-    with gui.sub_window("Presets", 0.05, 0.1, 0.2, 0.15) as w:
-        old_preset = curr_preset_id
-        for i in range(len(presets)):
-            if w.checkbox(preset_names[i], curr_preset_id == i):
-                curr_preset_id = i
-        if curr_preset_id != old_preset:
-            init()
-            paused = True
-    """
 
     with gui.sub_window("Gravity", 0.05, 0.3, 0.2, 0.1) as w:
         GRAVITY[0] = w.slider_float("x", GRAVITY[0], -10, 10)
@@ -476,15 +494,18 @@ def render():
 
 def main():
     frame_id = 0
-    series_prefix = "ply/ex.ply"
+    series_prefix = "MPM_ply/reference_ply/ex.ply"
     while window.running:
-        #print("heyyy ",frame_id)
         frame_id += 1
         frame_id = frame_id % 1024
 
         if not paused:
             for _ in range(steps):
-                substep(*GRAVITY)
+                if MPM_TYPE == MPM:
+                    MPM_substep(*GRAVITY)
+                elif MPM_TYPE == MLS_MPM:
+                    MLSMPM_substep(*GRAVITY)
+                    
 
         render()
         show_options()
